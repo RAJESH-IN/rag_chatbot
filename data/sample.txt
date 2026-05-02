@@ -1,0 +1,15 @@
+Artificial Intelligence is the simulation of human intelligence by machines.
+Machine Learning is a subset of AI that enables systems to learn from data.
+Deep Learning uses neural networks with many layers to learn complex patterns.
+Natural Language Processing allows computers to understand human language.
+RAG stands for Retrieval Augmented Generation.
+RAG combines a retrieval system with a language model to generate accurate answers.
+FAISS is a library developed by Facebook for efficient similarity search.
+Embeddings are numerical representations of text that capture semantic meaning.
+Vector databases store embeddings and allow fast similarity searches.
+LangChain is a framework for building applications powered by language models.
+Groq is a fast AI inference platform that provides free access to LLMs.
+FastAPI is a modern Python web framework for building APIs quickly.
+Streamlit is a Python library for building simple web UIs for data apps.
+Hallucination in AI means the model generates false or made-up information.
+Token is the basic unit of text that LLMs process — roughly 4 characters.

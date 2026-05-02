@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+openai
+groq
+langchain
+langchain-text-splitters
+langchain-community
+langchain-groq
+faiss-cpu
+sentence-transformers
+streamlit
+tiktoken
+python-dotenv
+httpx
+pypdf
+hallucination
+
