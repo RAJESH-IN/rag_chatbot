@@ -24,7 +24,7 @@ app = FastAPI(
     version    = "1.0.0"
 )
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# ── Request / Response models ─────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     question  : str
@@ -37,6 +37,7 @@ class ChatResponse(BaseModel):
     context_used       : bool
     response_time      : float
     hallucination_check: dict
+    source             : str = "knowledge_base"
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ def root():
         "status" : "healthy"
     }
 
+
 @app.get("/health")
 def health():
     return {
@@ -54,21 +56,25 @@ def health():
         "groq_key_loaded": bool(os.getenv("GROQ_API_KEY"))
     }
 
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     try:
+        # ── Start timer ────────────────────────────────────────────────────
         start_time = time.time()
 
-        # ── Step 1: Build context ──────────────────────────────────────────
-        built = build_context(
+        # ── Step 1: Build context from FAISS + web + memory ───────────────
+        built   = build_context(
             query      = request.question,
             session_id = request.session_id,
             top_k      = 3
         )
-        context = built["context"]
-        history = built["history"]
+        context  = built["context"]
+        history  = built["history"]
+        source   = built["source"]
+        used_web = built["used_web"]
 
-        # ── Step 2: Call LLM ───────────────────────────────────────────────
+        # ── Step 2: Call LLM with context + history ────────────────────────
         answer = ask_llm(
             question = request.question,
             context  = context,
@@ -86,10 +92,11 @@ def chat(request: ChatRequest):
         add_to_history(request.session_id, "user",      request.question)
         add_to_history(request.session_id, "assistant", answer)
 
-        # ── Step 5: Count tokens + log ─────────────────────────────────────
+        # ── Step 5: Count tokens + response time ───────────────────────────
         tokens        = get_token_usage(request.question, answer)
         response_time = round(time.time() - start_time, 3)
 
+        # ── Step 6: Log to JSON ────────────────────────────────────────────
         log_request(
             session_id   = request.session_id,
             question     = request.question,
@@ -99,13 +106,15 @@ def chat(request: ChatRequest):
             response_time= response_time
         )
 
+        # ── Step 7: Return response ────────────────────────────────────────
         return ChatResponse(
             answer             = answer,
             session_id         = request.session_id,
             tokens             = tokens,
             context_used       = bool(context),
             response_time      = response_time,
-            hallucination_check= hallucination_check
+            hallucination_check= hallucination_check,
+            source             = source
         )
 
     except Exception as e:
@@ -116,6 +125,7 @@ def chat(request: ChatRequest):
 
 @app.get("/history/{session_id}")
 def get_chat_history(session_id: str):
+    """Get conversation history for a session."""
     history = format_history_for_display(session_id)
     return {
         "session_id"   : session_id,
@@ -123,27 +133,43 @@ def get_chat_history(session_id: str):
         "history"      : history
     }
 
+
 @app.delete("/history/{session_id}")
 def delete_history(session_id: str):
+    """Clear conversation history for a session."""
     clear_history(session_id)
     return {"message": f"History cleared for: {session_id}"}
 
+
 @app.get("/sessions")
 def list_sessions():
+    """List all active sessions."""
     sessions = get_all_sessions()
-    return {"active_sessions": sessions, "count": len(sessions)}
+    return {
+        "active_sessions": sessions,
+        "count"          : len(sessions)
+    }
+
 
 # ── Monitoring Routes ─────────────────────────────────────────────────────────
 
 @app.get("/stats")
 def get_token_stats():
+    """Get overall token usage statistics."""
     return get_stats()
+
 
 @app.get("/logs")
 def get_logs(limit: int = 10):
-    return {"logs": get_recent_logs(limit), "limit": limit}
+    """Get recent request logs."""
+    return {
+        "logs" : get_recent_logs(limit),
+        "limit": limit
+    }
+
 
 @app.delete("/logs")
 def delete_logs():
+    """Clear all logs."""
     clear_logs()
     return {"message": "All logs cleared"}

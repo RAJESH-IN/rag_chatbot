@@ -13,5 +13,5 @@ tiktoken
 python-dotenv
 httpx
 pypdf
-hallucination
+duckduckgo-search
 

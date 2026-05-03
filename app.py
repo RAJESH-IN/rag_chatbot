@@ -3,7 +3,7 @@
 
 import streamlit as st
 import requests
-import json
+import uuid
 
 # ── Config ────────────────────────────────────────────────────────────────────
 API_URL    = "http://127.0.0.1:8000"
@@ -26,39 +26,45 @@ st.markdown("""
         padding: 1rem 0;
         color: #1F3864;
     }
-    .risk-low    { color: #28a745; font-weight: bold; }
-    .risk-medium { color: #ffc107; font-weight: bold; }
-    .risk-high   { color: #dc3545; font-weight: bold; }
-    .metric-box  {
-        background: #f8f9fa;
-        border-radius: 8px;
-        padding: 1rem;
+    .sub-header {
         text-align: center;
+        color: gray;
+        margin-bottom: 1rem;
     }
-    .stChatMessage { border-radius: 12px; }
+    .source-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: bold;
+        margin-top: 4px;
+    }
+    .source-kb  { background:#e8f5e9; color:#2e7d32; }
+    .source-web { background:#e3f2fd; color:#1565c0; }
+    .source-both{ background:#f3e5f5; color:#6a1b9a; }
+    .source-none{ background:#f5f5f5; color:#757575; }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Session state — persists across reruns ────────────────────────────────────
-if "messages"   not in st.session_state:
-    st.session_state.messages    = []  # chat history for display
+# ── Session state ─────────────────────────────────────────────────────────────
+if "messages"       not in st.session_state:
+    st.session_state.messages       = []
 
-if "session_id" not in st.session_state:
-    import uuid
-    st.session_state.session_id  = str(uuid.uuid4())[:8]  # unique session
+if "session_id"     not in st.session_state:
+    st.session_state.session_id     = str(uuid.uuid4())[:8]
 
-if "total_tokens" not in st.session_state:
-    st.session_state.total_tokens = 0
+if "total_tokens"   not in st.session_state:
+    st.session_state.total_tokens   = 0
 
-if "request_count" not in st.session_state:
-    st.session_state.request_count = 0
+if "request_count"  not in st.session_state:
+    st.session_state.request_count  = 0
 
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def send_message(question: str) -> dict:
-    """Send question to FastAPI and return response."""
+    """Send question to FastAPI and return full response."""
     try:
         response = requests.post(
             f"{API_URL}/chat",
@@ -70,13 +76,18 @@ def send_message(question: str) -> dict:
         )
         return response.json()
     except requests.exceptions.ConnectionError:
-        return {"error": "Cannot connect to API. Is the FastAPI server running?"}
+        return {
+            "error": "❌ Cannot connect to API. Is FastAPI running?\n"
+                     "Run: uvicorn main:app --reload"
+        }
+    except requests.exceptions.Timeout:
+        return {"error": "⏱️ Request timed out. Please try again."}
     except Exception as e:
         return {"error": str(e)}
 
 
-def get_stats() -> dict:
-    """Fetch stats from FastAPI."""
+def get_api_stats() -> dict:
+    """Fetch overall stats from FastAPI."""
     try:
         response = requests.get(f"{API_URL}/stats", timeout=5)
         return response.json()
@@ -85,7 +96,7 @@ def get_stats() -> dict:
 
 
 def check_api_health() -> bool:
-    """Check if FastAPI is running."""
+    """Check if FastAPI server is running."""
     try:
         response = requests.get(f"{API_URL}/health", timeout=3)
         return response.status_code == 200
@@ -93,14 +104,33 @@ def check_api_health() -> bool:
         return False
 
 
-def risk_color(risk: str) -> str:
-    """Return color based on risk level."""
-    colors = {
+def risk_icon(risk: str) -> str:
+    """Return emoji for risk level."""
+    return {
         "LOW"   : "🟢",
         "MEDIUM": "🟡",
         "HIGH"  : "🔴"
-    }
-    return colors.get(risk, "⚪")
+    }.get(risk, "⚪")
+
+
+def source_label(source: str) -> str:
+    """Return readable source label."""
+    return {
+        "knowledge_base": "📚 Knowledge Base",
+        "web_search"    : "🌐 Web Search",
+        "both"          : "📚🌐 Knowledge Base + Web",
+        "none"          : "💭 General Knowledge"
+    }.get(source, "📚 Knowledge Base")
+
+
+def source_color(source: str) -> str:
+    """Return color for source badge."""
+    return {
+        "knowledge_base": "green",
+        "web_search"    : "blue",
+        "both"          : "violet",
+        "none"          : "gray"
+    }.get(source, "green")
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -109,14 +139,15 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown(
-    "<p style='text-align:center; color:gray;'>"
-    "Powered by Groq LLM · FAISS · Short-term Memory · Hallucination Detection"
+    "<p class='sub-header'>"
+    "Powered by Groq LLM · FAISS · Short-term Memory · "
+    "Hallucination Detection · Web Search"
     "</p>",
     unsafe_allow_html=True
 )
 st.divider()
 
-# ── Layout — two columns ──────────────────────────────────────────────────────
+# ── Layout ────────────────────────────────────────────────────────────────────
 col_chat, col_info = st.columns([2, 1])
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -124,18 +155,21 @@ col_chat, col_info = st.columns([2, 1])
 # ════════════════════════════════════════════════════════════════════════════
 with col_chat:
 
-    # API status
+    # ── API Health ────────────────────────────────────────────────────────
     api_ok = check_api_health()
     if api_ok:
         st.success("✅ API Connected — FastAPI is running")
     else:
-        st.error("❌ API Offline — Start FastAPI: uvicorn main:app --reload")
+        st.error(
+            "❌ API Offline — Open a new terminal and run:\n"
+            "`uvicorn main:app --reload`"
+        )
         st.stop()
 
-    # Session info
+    # ── Session info ──────────────────────────────────────────────────────
     st.caption(f"🔑 Session ID: `{st.session_state.session_id}`")
 
-    # ── Chat history display ──────────────────────────────────────────────
+    # ── Chat section ──────────────────────────────────────────────────────
     st.subheader("💬 Chat")
 
     # Display all previous messages
@@ -143,102 +177,109 @@ with col_chat:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-            # Show metadata for assistant messages
+            # Show metadata only for assistant messages
             if msg["role"] == "assistant" and "meta" in msg:
                 meta = msg["meta"]
-                risk = meta.get("hallucination_risk", "UNKNOWN")
 
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.caption(
-                        f"{risk_color(risk)} Risk: **{risk}**"
-                    )
-                with col2:
-                    st.caption(
-                        f"🪙 Tokens: **{meta.get('total_tokens', 0)}**"
-                    )
-                with col3:
-                    st.caption(
-                        f"⚡ Time: **{meta.get('response_time', 0)}s**"
-                    )
+                risk   = meta.get("hallucination_risk", "UNKNOWN")
+                tokens = meta.get("total_tokens",       0)
+                time_  = meta.get("response_time",      0)
+                source = meta.get("source",             "knowledge_base")
 
-                # Show warning if high/medium risk
+                # ── Metadata row ──────────────────────────────────────────
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.caption(f"{risk_icon(risk)} **{risk}** risk")
+                with c2:
+                    st.caption(f"🪙 **{tokens}** tokens")
+                with c3:
+                    st.caption(f"⚡ **{time_}s**")
+                with c4:
+                    st.caption(source_label(source))
+
+                # ── Warning if needed ─────────────────────────────────────
                 warning = meta.get("warning")
                 if warning:
                     st.warning(warning)
 
-                # Show context used
-                if meta.get("context_used"):
-                    st.caption("📚 Answer grounded in knowledge base")
-
     # ── Chat input ────────────────────────────────────────────────────────
     if question := st.chat_input("Ask me anything..."):
 
-        # Show user message
+        # Show user message immediately
         with st.chat_message("user"):
             st.write(question)
 
-        # Add to display history
+        # Save user message
         st.session_state.messages.append({
             "role"   : "user",
             "content": question
         })
 
-        # Call API
+        # Get response from API
         with st.chat_message("assistant"):
             with st.spinner("🤔 Thinking..."):
                 result = send_message(question)
 
+            # ── Handle error ──────────────────────────────────────────────
             if "error" in result:
-                st.error(f"Error: {result['error']}")
-            else:
-                answer = result.get("answer", "No answer received")
-                st.write(answer)
+                st.error(result["error"])
+                st.stop()
 
-                # Extract metadata
-                h_check       = result.get("hallucination_check", {})
-                risk          = h_check.get("hallucination_risk", "UNKNOWN")
-                confidence    = h_check.get("confidence_score",   0)
-                warning       = h_check.get("warning")
-                tokens        = result.get("tokens",         {})
-                total_tokens  = tokens.get("total_tokens",   0)
-                response_time = result.get("response_time",  0)
-                context_used  = result.get("context_used",   False)
+            # ── Extract response data ─────────────────────────────────────
+            answer        = result.get("answer",        "No answer received")
+            h_check       = result.get("hallucination_check", {})
+            risk          = h_check.get("hallucination_risk", "UNKNOWN")
+            warning       = h_check.get("warning")
+            tokens_dict   = result.get("tokens",        {})
+            total_tokens  = tokens_dict.get("total_tokens",   0)
+            response_time = result.get("response_time", 0)
+            source        = result.get("source",        "knowledge_base")
+            context_used  = result.get("context_used",  False)
 
-                # Show metadata
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.caption(f"{risk_color(risk)} Risk: **{risk}**")
-                with col2:
-                    st.caption(f"🪙 Tokens: **{total_tokens}**")
-                with col3:
-                    st.caption(f"⚡ Time: **{response_time}s**")
+            # ── Show answer ───────────────────────────────────────────────
+            st.write(answer)
 
-                if warning:
-                    st.warning(warning)
+            # ── Show metadata row ─────────────────────────────────────────
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.caption(f"{risk_icon(risk)} **{risk}** risk")
+            with c2:
+                st.caption(f"🪙 **{total_tokens}** tokens")
+            with c3:
+                st.caption(f"⚡ **{response_time}s**")
+            with c4:
+                st.caption(source_label(source))
 
-                if context_used:
-                    st.caption("📚 Answer grounded in knowledge base")
+            # ── Source badge ──────────────────────────────────────────────
+            color = source_color(source)
+            st.markdown(
+                f":{color}[{source_label(source)}]"
+            )
 
-                # Update session stats
-                st.session_state.total_tokens  += total_tokens
-                st.session_state.request_count += 1
+            # ── Warning ───────────────────────────────────────────────────
+            if warning:
+                st.warning(warning)
 
-                # Save to display history
-                st.session_state.messages.append({
-                    "role"   : "assistant",
-                    "content": answer,
-                    "meta"   : {
-                        "hallucination_risk": risk,
-                        "confidence_score"  : confidence,
-                        "warning"           : warning,
-                        "total_tokens"      : total_tokens,
-                        "response_time"     : response_time,
-                        "context_used"      : context_used
-                    }
-                })
+            # ── Update session counters ───────────────────────────────────
+            st.session_state.total_tokens  += total_tokens
+            st.session_state.request_count += 1
 
-                st.rerun()
+            # ── Save assistant message to history ─────────────────────────
+            st.session_state.messages.append({
+                "role"   : "assistant",
+                "content": answer,
+                "meta"   : {
+                    "hallucination_risk": risk,
+                    "warning"           : warning,
+                    "total_tokens"      : total_tokens,
+                    "response_time"     : response_time,
+                    "source"            : source,
+                    "context_used"      : context_used
+                }
+            })
+
+        st.rerun()
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # RIGHT COLUMN — Info Panel
@@ -260,18 +301,31 @@ with col_info:
             value = st.session_state.total_tokens
         )
 
-    # ── Overall Stats from API ────────────────────────────────────────────
+    # ── Overall Stats ─────────────────────────────────────────────────────
     st.subheader("🌐 Overall Stats")
-    stats = get_stats()
+    stats = get_api_stats()
 
-    if stats:
-        st.metric("Total Requests",   stats.get("total_requests",        0))
-        st.metric("Total Tokens",     stats.get("total_tokens",          0))
-        st.metric("Avg Tokens/Req",   stats.get("average_tokens",        0))
-        st.metric("Avg Response Time",
-                  f"{stats.get('average_response_time', 0)}s")
-        st.metric("Context Used",
-                  f"{stats.get('context_used_percent', 0)}%")
+    if stats and stats.get("total_requests", 0) > 0:
+        st.metric(
+            label = "Total Requests",
+            value = stats.get("total_requests", 0)
+        )
+        st.metric(
+            label = "Total Tokens",
+            value = stats.get("total_tokens", 0)
+        )
+        st.metric(
+            label = "Avg Tokens / Request",
+            value = stats.get("average_tokens", 0)
+        )
+        st.metric(
+            label = "Avg Response Time",
+            value = f"{stats.get('average_response_time', 0)}s"
+        )
+        st.metric(
+            label = "Context Used",
+            value = f"{stats.get('context_used_percent', 0)}%"
+        )
     else:
         st.info("No stats yet — send a message!")
 
@@ -280,45 +334,69 @@ with col_info:
     # ── Controls ──────────────────────────────────────────────────────────
     st.subheader("⚙️ Controls")
 
-    # Clear chat
+    # Clear chat history
     if st.button("🗑️ Clear Chat", use_container_width=True):
-        st.session_state.messages = []
+        st.session_state.messages      = []
+        st.session_state.total_tokens  = 0
+        st.session_state.request_count = 0
         try:
             requests.delete(
-                f"{API_URL}/history/{st.session_state.session_id}"
+                f"{API_URL}/history/{st.session_state.session_id}",
+                timeout=5
             )
         except:
             pass
-        st.success("Chat cleared!")
+        st.success("✅ Chat cleared!")
         st.rerun()
 
-    # New session
+    # Start new session
     if st.button("🔄 New Session", use_container_width=True):
-        import uuid
         st.session_state.messages      = []
         st.session_state.session_id    = str(uuid.uuid4())[:8]
         st.session_state.total_tokens  = 0
         st.session_state.request_count = 0
-        st.success("New session started!")
+        st.success("✅ New session started!")
         st.rerun()
+
+    # Clear all logs
+    if st.button("📋 Clear Logs", use_container_width=True):
+        try:
+            requests.delete(f"{API_URL}/logs", timeout=5)
+            st.success("✅ Logs cleared!")
+        except:
+            st.error("Could not clear logs")
 
     st.divider()
 
-    # ── How it works ──────────────────────────────────────────────────────
+    # ── How It Works ──────────────────────────────────────────────────────
     st.subheader("ℹ️ How It Works")
     st.markdown("""
-    1. 📝 **Your question** goes to FastAPI
-    2. 🔍 **FAISS** finds relevant knowledge
-    3. 🧠 **Memory** adds conversation history
-    4. 🤖 **Groq LLM** generates the answer
-    5. 🔎 **Hallucination check** rates reliability
-    6. 📊 **Token monitor** logs everything
+    1. 📝 You ask a question
+    2. 🔍 FAISS searches knowledge base
+    3. 🌐 Web search for live queries
+    4. 🧠 Memory adds chat history
+    5. 🤖 Groq LLM generates answer
+    6. 🔎 Hallucination check rates it
+    7. 📊 Token monitor logs everything
     """)
+
+    st.divider()
 
     # ── Risk Legend ───────────────────────────────────────────────────────
     st.subheader("🎯 Risk Legend")
     st.markdown("""
-    - 🟢 **LOW** — Answer grounded in data
+    - 🟢 **LOW** — Grounded in context
     - 🟡 **MEDIUM** — Partially grounded
     - 🔴 **HIGH** — May be unreliable
+    """)
+
+    st.divider()
+
+    # ── Source Legend ─────────────────────────────────────────────────────
+    st.subheader("📡 Source Legend")
+    st.markdown("""
+    - 📚 **Knowledge Base** — from your documents
+    - 🌐 **Web Search** — from live internet
+    - 📚🌐 **Both** — combined sources
+    - 💭 **General** — LLM general knowledge
     """)
